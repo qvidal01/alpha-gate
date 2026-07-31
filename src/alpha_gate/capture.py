@@ -289,13 +289,31 @@ def audit_bars(symbol: str, interval: str,
         if cur["close_time_unix"] - prev["close_time_unix"] > interval_s * 1.5
     )
 
-    span_days = (bars[-1]["close_time_unix"] - bars[0]["close_time_unix"]) / 86400.0
+    span_s = bars[-1]["close_time_unix"] - bars[0]["close_time_unix"]
+    span_days = span_s / 86400.0
+
+    # COVERAGE, not just span. `days` is measured first-bar-to-last-bar, so a
+    # record with 200 bars scattered across 90 days reports days=90 and looks
+    # identical to a complete 2160-bar one. That is the shape of the failure we
+    # actually fear here: the capture cron dies, nobody notices for weeks, and
+    # the verdict is computed on a swiss-cheese record that still satisfies the
+    # elapsed-days gate.
+    #
+    # Reported, never silently repaired. Backfilling a hole would destroy the
+    # one property this harness exists to guarantee — that every bar was
+    # observed forward, after it closed.
+    expected_bars = int(span_s // interval_s) + 1 if span_s > 0 else len(bars)
+    coverage = (len(bars) / expected_bars) if expected_bars > 0 else 1.0
+    missing = max(0, expected_bars - len(bars))
 
     return {
         "symbol": symbol,
         "bars": len(bars),
         "days": round(span_days, 2),
         "gaps": gaps,
+        "expected_bars": expected_bars,
+        "missing_bars": missing,
+        "coverage": round(coverage, 4),
         "first": bars[0].get("close_time_utc"),
         "last": bars[-1].get("close_time_utc"),
         "problems": problems,

@@ -58,6 +58,12 @@ DSR_THRESHOLD = 0.95
 # Below this, per-trade noise dominates and the Sharpe estimate is not stable.
 MIN_TRADES_FOR_VERDICT = 10
 
+# Fraction of expected bars that must actually be present before a verdict is
+# allowed. `elapsed_days` is span, not density: 200 bars scattered over 90 days
+# satisfies the time gate while carrying a fraction of the information. This is
+# the gate that notices a capture cron that quietly died in week three.
+MIN_COVERAGE = 0.90
+
 
 class Verdict:
     INVALID = "INVALID"
@@ -215,6 +221,49 @@ def required_sharpe(t: int, n_trials: int, threshold: float = 0.95) -> float:
     return sr0 + norm_ppf(threshold) / math.sqrt(t - 1)
 
 
+def min_track_record_length(returns: list[float], n_trials: int,
+                            threshold: float = 0.95) -> float:
+    """
+    Minimum Track Record Length: observations needed for THIS Sharpe to clear
+    the bar (Bailey & Lopez de Prado).
+
+    `required_sharpe` answers "how good must it be, given how long it has run".
+    This answers the question an operator actually asks at month two: "it is
+    running at the Sharpe it is running at — do I wait, or is this hopeless?"
+
+    Solving the DSR inequality for t:
+
+        t >= 1 + (1 - g3*SR + (g4-1)/4 * SR^2) * (Z_threshold / (SR - SR0))^2
+
+    Returns inf when SR <= SR0, which is the honest answer and the common one:
+    a strategy whose Sharpe does not exceed the multiple-testing benchmark will
+    NEVER clear the bar by waiting. More data cannot rescue it, because SR0 does
+    not shrink with t fast enough to be caught. Knowing that at day 30 instead
+    of day 90 is most of the value.
+
+    Note SR0 itself depends on t (via null_sr_variance), so this is one
+    Newton-free fixed-point pass: compute SR0 at the CURRENT t, then solve. It
+    is a good approximation because SR0 moves slowly in t; it is not exact, and
+    the report labels it an estimate.
+    """
+    t = len(returns)
+    if t < 3:
+        return float("inf")
+
+    sr = sharpe(returns)
+    _, _, skew, kurt = _moments(returns)
+    sr0 = expected_max_sharpe(n_trials, null_sr_variance(t))
+
+    if sr <= sr0:
+        return float("inf")
+
+    denom_sq = 1.0 - skew * sr + ((kurt - 1.0) / 4.0) * sr * sr
+    if denom_sq <= 0:
+        return float("inf")
+
+    return 1.0 + denom_sq * (norm_ppf(threshold) / (sr - sr0)) ** 2
+
+
 def max_drawdown(equity: list[float]) -> float:
     if not equity:
         return 0.0
@@ -258,6 +307,11 @@ class Report:
     bars: int = 0
     trades: int = 0
 
+    expected_bars: int = 0
+    missing_bars: int = 0
+    coverage: float = 1.0
+    capture_gaps: int = 0
+
     net_return: float = 0.0
     baseline_return: float = 0.0
     excess_return: float = 0.0
@@ -277,6 +331,8 @@ class Report:
     benchmark_sharpe: float = 0.0
     required_sharpe_annual: float = 0.0
     noise_floor_return: float = 0.0
+    min_track_record_bars: float = 0.0
+    min_track_record_days: float = 0.0
 
     seal_violations: list[str] = field(default_factory=list)
     data_problems: list[str] = field(default_factory=list)
@@ -293,6 +349,9 @@ class Report:
             f"  elapsed        {self.elapsed_days:.1f} days "
             f"(need {self.required_days})",
             f"  bars / trades  {self.bars} / {self.trades}",
+            f"  capture        {self.coverage:.1%} complete "
+            f"({self.missing_bars} missing, {self.capture_gaps} gap(s)) "
+            f"<- span is not density",
             "",
             f"  net return     {self.net_return:+.2%}",
             f"  buy & hold     {self.baseline_return:+.2%}",
@@ -320,6 +379,18 @@ class Report:
             "<- the bar, given this trial count and sample size",
             f"  deflated SR    {self.dsr:.3f} (need >= {self.dsr_threshold})",
         ]
+        # The operator's real question at month two is "wait, or give up?"
+        if self.min_track_record_days == float("inf"):
+            lines.append(
+                "  time to clear  NEVER at this Sharpe <- it does not exceed the "
+                "multiple-testing benchmark, so more data cannot rescue it"
+            )
+        elif self.min_track_record_days > 0:
+            remaining = self.min_track_record_days - self.elapsed_days
+            lines.append(
+                f"  time to clear  ~{self.min_track_record_days:.0f} days total "
+                f"({remaining:+.0f} from here) <- MinTRL at the current Sharpe"
+            )
         if self.reasons:
             lines += ["", "  why:"] + [f"    - {r}" for r in self.reasons]
         return "\n".join(lines)
@@ -380,6 +451,10 @@ def evaluate(
         return report
 
     report.elapsed_days = audit.get("days", 0.0)
+    report.expected_bars = audit.get("expected_bars", 0)
+    report.missing_bars = audit.get("missing_bars", 0)
+    report.coverage = audit.get("coverage", 1.0)
+    report.capture_gaps = audit.get("gaps", 0)
 
     if len(bars) < 3:
         report.verdict = Verdict.INCONCLUSIVE
@@ -423,12 +498,36 @@ def evaluate(
     report.required_sharpe_annual = annualize_sharpe(
         required_sharpe(len(strat_rets), max(report.n_trials, 1)), bpy)
 
+    mtrl = min_track_record_length(strat_rets, max(report.n_trials, 1))
+    report.min_track_record_bars = mtrl
+    report.min_track_record_days = (
+        mtrl / (bpy / 365.25) if mtrl != float("inf") else float("inf"))
+
     # --- Gate 3: enough time? ----------------------------------------------
     if report.elapsed_days < spec.min_days:
         report.verdict = Verdict.INCONCLUSIVE
         report.reasons = [
             f"only {report.elapsed_days:.1f} of {spec.min_days} required days. "
             "Numbers above are provisional and must not be acted on."
+        ]
+        return report
+
+    # --- Gate 3b: is the record actually DENSE, not just long? --------------
+    # Deliberately after the elapsed-days gate and before any verdict: a sparse
+    # record is not a FAIL (the strategy did not do anything wrong) and it is
+    # not INVALID (nothing was falsified). It is INCONCLUSIVE, and it is
+    # recoverable by fixing capture and waiting.
+    if report.coverage < MIN_COVERAGE:
+        report.verdict = Verdict.INCONCLUSIVE
+        report.reasons = [
+            f"capture is {report.coverage:.1%} complete "
+            f"({report.bars} of {report.expected_bars} expected bars; "
+            f"{report.missing_bars} missing across {report.capture_gaps} gap(s)). "
+            f"Need {MIN_COVERAGE:.0%}. The elapsed-days gate measures the SPAN "
+            "from first bar to last, so an interrupted capture can satisfy it "
+            "while carrying a fraction of the information. Fix capture and keep "
+            "running — the holes are not backfillable without destroying the "
+            "forward-only guarantee."
         ]
         return report
 

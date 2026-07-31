@@ -500,3 +500,95 @@ def test_more_time_lowers_the_bar_more_than_more_variants_raise_it():
     ninety_ten_trials = annualize_sharpe(required_sharpe(90 * 24, 10), bpy)
 
     assert year_one_trial < ninety_one_trial < ninety_ten_trials
+
+
+# --------------------------------------------------------------------------- #
+# Capture density and MinTRL (added 2026-07-31)
+# --------------------------------------------------------------------------- #
+
+def test_sparse_capture_is_inconclusive_not_a_verdict(tmp_path):
+    """
+    The failure this exists to catch: the capture cron dies quietly in week
+    three and nobody notices until the verdict is computed on a swiss-cheese
+    record.
+
+    `elapsed_days` is measured first-bar-to-last-bar, so a sparse record
+    satisfies the 90-day gate while carrying a fraction of the information.
+    Both records below span >90 days; only one is actually dense.
+    """
+    spec = StrategySpec(
+        strategy_id="buy_and_hold",
+        hypothesis="a sparse record must not be allowed to produce a verdict",
+        params={}, universe=["TESTUSDT"],
+    )
+    s = seal(spec, registry_dir=tmp_path / "reg")
+    t0 = s.sealed_at_unix + 10
+
+    # Every 8th hour only: spans ~100 days, but ~12.5% coverage.
+    sparse = [make_bar(i * 8, 100.0 + i, t0=t0) for i in range(300)]
+    data_dir = _write_bars(tmp_path, sparse)
+    report = evaluate(s, "TESTUSDT", FEES, bars=sparse,
+                      data_dir=data_dir, registry_dir=tmp_path / "reg")
+
+    assert report.elapsed_days > 90, "fixture must clear the elapsed-days gate"
+    assert report.verdict == Verdict.INCONCLUSIVE
+    assert "complete" in " ".join(report.reasons)
+    assert report.coverage < 0.5
+    assert report.missing_bars > 0
+
+
+def test_dense_capture_reports_full_coverage(tmp_path):
+    """The false-positive direction: a complete record must not be penalised."""
+    spec = StrategySpec(
+        strategy_id="buy_and_hold",
+        hypothesis="a complete record must report full coverage and pass the gate",
+        params={}, universe=["TESTUSDT"],
+    )
+    s = seal(spec, registry_dir=tmp_path / "reg")
+    t0 = s.sealed_at_unix + 10
+
+    dense = [make_bar(i, 100.0 + i, t0=t0) for i in range(2400)]
+    data_dir = _write_bars(tmp_path, dense)
+    report = evaluate(s, "TESTUSDT", FEES, bars=dense,
+                      data_dir=data_dir, registry_dir=tmp_path / "reg")
+
+    assert report.coverage == 1.0
+    assert report.missing_bars == 0
+    assert "complete" not in " ".join(report.reasons)
+
+
+def test_mintrl_is_infinite_when_sharpe_below_benchmark():
+    """
+    The honest and common answer: a Sharpe that does not exceed the
+    multiple-testing benchmark will NEVER clear the bar by waiting. Saying so
+    at day 30 is most of this function's value.
+    """
+    from alpha_gate.evaluate import min_track_record_length
+
+    flat = [0.0001, -0.0001] * 200          # ~zero Sharpe
+    assert min_track_record_length(flat, n_trials=50) == float("inf")
+
+
+def test_mintrl_shrinks_as_sharpe_rises():
+    """A stronger edge needs less time to prove. Monotonicity is the claim."""
+    from alpha_gate.evaluate import min_track_record_length
+    import random
+
+    rng = random.Random(7)
+    weak = [rng.gauss(0.0010, 0.01) for _ in range(500)]
+    strong = [rng.gauss(0.0050, 0.01) for _ in range(500)]
+
+    t_weak = min_track_record_length(weak, n_trials=1)
+    t_strong = min_track_record_length(strong, n_trials=1)
+    assert t_strong < t_weak, (t_strong, t_weak)
+
+
+def test_mintrl_grows_with_trial_count():
+    """More variants tried => longer to prove, same as the DSR bar itself."""
+    from alpha_gate.evaluate import min_track_record_length
+    import random
+
+    rng = random.Random(11)
+    rets = [rng.gauss(0.004, 0.01) for _ in range(500)]
+    assert (min_track_record_length(rets, n_trials=20)
+            > min_track_record_length(rets, n_trials=1))
