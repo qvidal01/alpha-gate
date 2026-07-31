@@ -23,7 +23,7 @@ from alpha_gate import __version__
 from alpha_gate.capture import (INTERVAL_SECONDS, audit_bars, capture_universe,
                                 read_bars)
 from alpha_gate.costs import fetch_fee_schedule
-from alpha_gate.evaluate import Verdict, evaluate
+from alpha_gate.evaluate import MIN_COVERAGE, Verdict, evaluate
 from alpha_gate.prereg import (REGISTRY_DIR, SealError, StrategySpec,
                                count_trials, latest_seal, load_seals, seal)
 from alpha_gate.strategies import REGISTRY
@@ -93,9 +93,19 @@ def cmd_status(args: argparse.Namespace) -> int:
     symbols = args.symbols or _symbols_from_registry()
     for sym in sorted(symbols):
         a = audit_bars(sym, args.interval)
+        # Coverage, not just gap COUNT. One gap of 300 hours and one gap of one
+        # hour both print "gaps=1"; only the percentage distinguishes them, and
+        # only the percentage tells you whether a verdict is still reachable.
+        cov = a.get("coverage", 1.0)
         flag = "ok" if a["ok"] else "PROBLEM"
+        if cov < MIN_COVERAGE:
+            flag = "THIN"          # below this, evaluate() refuses a verdict
         print(f"  {sym:<12} {a['bars']:>5} bars  {a['days']:>6.1f} days  "
-              f"gaps={a['gaps']:<3} {flag}")
+              f"gaps={a['gaps']:<3} cov={cov:>6.1%}  {flag}")
+        if cov < MIN_COVERAGE:
+            print(f"      ! {a.get('missing_bars', 0)} of "
+                  f"{a.get('expected_bars', 0)} expected bars missing — "
+                  f"below {MIN_COVERAGE:.0%}, verdict will be INCONCLUSIVE")
         for p in a.get("problems", []):
             print(f"      ! {p}")
     return EXIT_OK
