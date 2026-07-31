@@ -1,11 +1,5 @@
 # alpha-gate — working notes
 
-> **To make this auto-load in Claude Code sessions**, promote it to the repo
-> root as `CLAUDE.md`:
-> `touch ~/.claude/.claude-md-edit-pass && mv docs/CONVENTIONS.md CLAUDE.md`
-> (left here because the protect-claude-md hook blocks agent-written CLAUDE.md
-> files, and self-granting the pass is not allowed.)
-
 A harness for honestly disproving trading strategies. Read `README.md` first;
 this file is the operating discipline for anyone (human or agent) editing it.
 
@@ -48,6 +42,11 @@ mechanism, not a bug.
 intervals stale. If there is a gap, the honest response is to let `status` show
 the gap — or, if it is large enough to matter, seal a fresh trial and restart
 the clock. Never paper over it.
+
+**ubuntuai is the system of record.** Capture runs there on cron (`3 * * * *`),
+logging to `/aidata/logs/alpha-gate.log`. Do NOT also capture on the Mac —
+two divergent append-only records would have to be reconciled before any
+evaluation, and reconciling them by hand is indistinguishable from backfilling.
 
 **MEXC kline intervals are not Binance's.** Hourly is `60m`; `1h` returns HTTP
 400. Verified live 2026-07-31. Canonical names stay `1h` everywhere in specs
