@@ -196,6 +196,27 @@ execution **worse** than what this reports:
 this gate would fail harder in production. A strategy that passes it has earned
 one more test, not capital.
 
+### Methodological limits — read `docs/METHOD.md`
+
+Validated 2026-07-31 against the Bailey / López de Prado source material. The
+formulas match; four departures are documented there with the direction each one
+errs. Two you should know before trusting any verdict:
+
+- **This is a SINGLE-PATH evaluation, and the source names that as a flaw.**
+  López de Prado criticises walk-forward backtesting *and* forward/paper trading
+  on identical grounds: one historical path is easily overfit and is not
+  representative. His alternative is Combinatorial Purged Cross-Validation.
+  Forward-only buys enforceable pre-registration and impossible lookahead, which
+  CPCV cannot — but a PASS here should trigger CPCV work, not a deployment.
+- **The deflation grows lenient as trials accumulate.** `V` uses the null
+  sampling variance `1/t` rather than the observed spread of Sharpes across
+  trials. Real variants disperse more than noise, so the true bar is higher than
+  the computed one. Harmless at one trial; not at ten.
+
+The required-Sharpe figures quoted above are also the **normal-case** bar —
+`required_sharpe` inverts the threshold at zero skew and kurtosis 3, while the
+verdict itself uses the real moments. Negative skew and fat tails require more.
+
 ---
 
 ## Salvage provenance
