@@ -1,0 +1,18 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.DS_Store
+
+# Captured market data: append-only, can be large, and is machine-local
+# evidence rather than source. The SEALS in registry/ are what get committed --
+# they are the claims. Data is the observation.
+data/bars/*.jsonl
+data/ledgers/
+data/fees.json
+
+# Never
+.env
+*.secret

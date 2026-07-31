@@ -1,0 +1,32 @@
+{
+  "code_sha256": "0ab1c41b4ba8a39250a9f05a06b1673eec6e95dfafa2b529c484489653e8da34",
+  "git_commit": "uncommitted",
+  "seal_version": 1,
+  "sealed_at_unix": 1785497994.240989,
+  "sealed_at_utc": "2026-07-31T11:39:54.240989+00:00",
+  "spec": {
+    "bar_interval": "1h",
+    "fee_mode": "taker",
+    "hypothesis": "The salvaged RSI+MACD+Bollinger+trend aggregate at min_confidence=65 (the threshold mexc-trading-bot actually runs) beats buy-and-hold on each of BTC, ETH, XRP and FLR over 90 days of hourly bars, net of real MEXC taker fees and real order-book slippage.",
+    "initial_equity": 1000.0,
+    "min_days": 90,
+    "model_cutoff": null,
+    "notes": "Trial 1. Strategy salvaged verbatim from mexc-trading-bot@bb87e03 src/indicators.py. FLR included deliberately as the illiquid stress case: measured 8.0bps spread and 22.8bps slippage on a 5k order at seal time, vs ~0bps for BTC.",
+    "params": {
+      "min_confidence": 65.0
+    },
+    "sizing_fraction": 0.02,
+    "sizing_mode": "fixed_fraction",
+    "slippage_model": "book_walk",
+    "strategy_id": "ta_aggregate",
+    "universe": [
+      "BTCUSDT",
+      "ETHUSDT",
+      "XRPUSDT",
+      "FLRUSDT"
+    ]
+  },
+  "spec_sha256": "8a0af763cbe98e1c914b17eae529d34969f02aaa5446a52e24225ed9d109c97b",
+  "superseded_by": null,
+  "trial_index": 1
+}
