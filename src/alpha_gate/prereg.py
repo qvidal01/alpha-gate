@@ -324,6 +324,11 @@ def latest_seal(strategy_id: str, registry_dir: Path | None = None) -> Seal | No
 class SealVerdict:
     ok: bool
     violations: list[str] = field(default_factory=list)
+    # Reasons the seal could not be CHECKED, as distinct from reasons it was
+    # BROKEN. Both block a verdict -- `ok` is False either way, so the
+    # fail-closed property is unchanged -- but only `violations` is an
+    # accusation. See verify_seal for why the distinction is load-bearing.
+    unprovable: list[str] = field(default_factory=list)
 
     def __bool__(self) -> bool:
         return self.ok
@@ -336,6 +341,7 @@ def verify_seal(s: Seal, bars: list[dict] | None = None) -> SealVerdict:
     result could have been fitted after the fact.
     """
     violations: list[str] = []
+    unprovable: list[str] = []
 
     # 1. The spec has not been edited since sealing.
     spec = StrategySpec(**s.spec)
@@ -345,10 +351,35 @@ def verify_seal(s: Seal, bars: list[dict] | None = None) -> SealVerdict:
         )
 
     # 2. The strategy code has not been edited since sealing.
+    #
+    # A failure to HASH is not evidence of an edit, and must not be reported as
+    # one. It still blocks the verdict (ok stays False, so this remains
+    # fail-closed and a deliberately-broken import cannot be used to dodge the
+    # check) -- but it goes to `unprovable`, not `violations`.
+    #
+    # Why this matters more here than almost anywhere else: measured 2026-08-02,
+    # a fresh `git clone` of this repo reports
+    #     "SEAL VIOLATED - verdicts from these runs are void:
+    #      ta_aggregate ...: strategy code cannot be hashed: No module named 'pandas'"
+    # strategy_code_hash reads SOURCE BYTES -- the hash basis is sound and
+    # environment-independent -- but resolving WHICH files to hash imports
+    # alpha_gate.strategies, which pulls in pandas. So an independent party
+    # verifying this trial the obvious way (clone it, run the gate) is told the
+    # seal is VIOLATED, i.e. that the strategy was edited after the fact, when
+    # in truth a dependency is merely absent.
+    #
+    # For a harness whose entire product is that its verdicts can be trusted by
+    # someone who does not trust the operator, accusing yourself of fraud when a
+    # library is missing is the worst possible failure mode. It is also the same
+    # confusion the estate's evaluator contract exists to prevent: 1 means FAILED,
+    # 3 means CANNOT TELL, and they are never the same claim.
+    #
+    # NOT changed: what gets hashed. Trial #1 is sealed against the current basis
+    # and any change to it would silently void a live trial.
     try:
         current = strategy_code_hash(spec.strategy_id)
-    except Exception as exc:  # noqa: BLE001 - any failure here is a violation
-        violations.append(f"strategy code cannot be hashed: {exc}")
+    except Exception as exc:  # noqa: BLE001 - cannot hash => cannot prove, still blocks
+        unprovable.append(f"strategy code cannot be hashed: {exc}")
     else:
         if current != s.code_sha256:
             violations.append(
@@ -382,7 +413,13 @@ def verify_seal(s: Seal, bars: list[dict] | None = None) -> SealVerdict:
                     f"outcomes during training; results on them are not evidence."
                 )
 
-    return SealVerdict(ok=not violations, violations=violations)
+    # ok is False when the seal is broken OR merely uncheckable: fail-closed in
+    # both cases. The lists are what tell an operator which one happened.
+    return SealVerdict(
+        ok=not violations and not unprovable,
+        violations=violations,
+        unprovable=unprovable,
+    )
 
 
 __all__ = [

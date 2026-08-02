@@ -124,13 +124,15 @@ if not seals:
 problems = []
 for s in seals:
     v = verify_seal(s)          # no bars: checks spec + code hashes only
-    if not v.ok:
-        for x in v.violations:
-            problems.append(f"{s.spec['strategy_id']} @ {s.sealed_at_utc[:19]}: {x}")
+    tag = f"{s.spec['strategy_id']} @ {s.sealed_at_utc[:19]}"
+    for x in v.violations:
+        problems.append(("VIOLATION", f"{tag}: {x}"))
+    for x in getattr(v, "unprovable", []):
+        problems.append(("UNPROVABLE", f"{tag}: {x}"))
 
 print(f"COUNT {count_trials()}")
-for p in problems:
-    print(f"VIOLATION {p}")
+for kind, p in problems:
+    print(f"{kind} {p}")
 PYEOF
 )
 if printf '%s' "$seal_out" | grep -q "^EMPTY"; then
@@ -138,6 +140,17 @@ if printf '%s' "$seal_out" | grep -q "^EMPTY"; then
 elif printf '%s' "$seal_out" | grep -q "^VIOLATION"; then
   bad "SEAL VIOLATED — verdicts from these runs are void:"
   printf '%s\n' "$seal_out" | grep "^VIOLATION" | sed 's/^VIOLATION /      /'
+elif printf '%s' "$seal_out" | grep -q "^UNPROVABLE"; then
+  # The seal could not be CHECKED. Still blocks a verdict — but this is not an
+  # accusation, and must never be printed as one. Before 2026-08-02 both cases
+  # shared the "SEAL VIOLATED" line, so a fresh `git clone` without pandas
+  # installed reported that the strategy had been edited after sealing. For a
+  # harness whose whole product is that an independent party can check the work,
+  # accusing yourself of fraud when a library is missing is the worst possible
+  # failure mode.
+  unproven "SEAL UNVERIFIED here — this is NOT evidence of tampering:"
+  printf '%s\n' "$seal_out" | grep "^UNPROVABLE" | sed 's/^UNPROVABLE /      /'
+  echo "      Install the runtime deps and re-run; only a HASH MISMATCH means a violation." >&2
 else
   n=$(printf '%s' "$seal_out" | grep "^COUNT" | awk '{print $2}')
   ok "all $n seal(s) intact — spec and strategy code unchanged since sealing"
