@@ -75,10 +75,20 @@ else
   ok "no request signing outside prereg hashing — no credential path exists"
 fi
 
-# --- 2. every tracked Python file parses ------------------------------------ #
+# --- 2. every Python file parses -------------------------------------------- #
 # Uses ast.parse, which writes nothing (compileall would create __pycache__ and
 # trip the mutation guard).
-parse_out=$(git ls-files '*.py' | "$PY" -c '
+#
+# CAVEATS rule 12, 2026-08-01: covers UNTRACKED-but-not-ignored .py as well.
+# `git ls-files` is blind to the newest file in the tree, and in a harness whose
+# entire value is that its result cannot be quietly influenced, "the file nobody
+# checked" is the wrong thing to have. Python runs what is on disk.
+#
+# Worth recording for the next audit: check 1 — the structural guarantee that
+# this package cannot place an order — was ALREADY safe from this, because it
+# greps the filesystem (`grep -rn ... src/`) rather than git. That is why the
+# safety-critical half of this gate needed no change and this one did.
+parse_out=$( { git ls-files '*.py'; git ls-files --others --exclude-standard '*.py'; } | sort -u | "$PY" -c '
 import ast, sys, pathlib
 bad = []
 for line in sys.stdin:
@@ -94,7 +104,7 @@ print("\n".join(bad))
 if [ -n "$parse_out" ]; then
   bad "Python files do not parse:"; printf '%s\n' "$parse_out" | sed 's/^/      /'
 else
-  ok "every tracked Python file parses"
+  ok "every Python file parses ($( { git ls-files '*.py'; git ls-files --others --exclude-standard '*.py'; } | sort -u | wc -l | tr -d ' ') files, tracked + untracked)"
 fi
 
 # --- 3. seals are intact ---------------------------------------------------- #
