@@ -190,12 +190,25 @@ else
 fi
 
 # --- 5. the honesty suite --------------------------------------------------- #
-if "$PY" -m pytest tests/ -q >/tmp/alpha_gate_pytest.log 2>&1; then
+# pytest's exit vocabulary is trustworthy and the 1-vs-not-1 split is the whole
+# evaluator contract: only rc=1 means "a test ASSERTED and failed". 2/3/4 are
+# interrupted / internal / usage — with missing runtime deps the suite dies at
+# COLLECTION (ImportError -> rc 2), having judged nothing. Before 2026-08-02 that
+# was printed as "the harness cannot be trusted to judge anything", which is an
+# accusation, in the same clone that had just mis-reported the seal for the same
+# underlying reason (no pandas). Same fix as the seal: block the verdict, drop
+# the accusation.
+"$PY" -m pytest tests/ -q >/tmp/alpha_gate_pytest.log 2>&1
+pyt_rc=$?
+if [ "$pyt_rc" -eq 0 ]; then
   n=$(grep -oE '[0-9]+ passed' /tmp/alpha_gate_pytest.log | head -1)
   ok "honesty suite green (${n:-passed}) — lookahead, seal, cost and deflation checks"
-else
+elif [ "$pyt_rc" -eq 1 ]; then
   bad "honesty suite FAILED — the harness cannot be trusted to judge anything:"
   tail -20 /tmp/alpha_gate_pytest.log | sed 's/^/      /'
+else
+  unproven "honesty suite COULD NOT RUN (pytest rc=$pyt_rc — collection/usage, not a failed test):"
+  tail -5 /tmp/alpha_gate_pytest.log | sed 's/^/      /'
 fi
 
 # --- 6. no secrets ---------------------------------------------------------- #
