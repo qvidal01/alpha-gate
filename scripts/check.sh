@@ -151,6 +151,14 @@ elif printf '%s' "$seal_out" | grep -q "^UNPROVABLE"; then
   unproven "SEAL UNVERIFIED here — this is NOT evidence of tampering:"
   printf '%s\n' "$seal_out" | grep "^UNPROVABLE" | sed 's/^UNPROVABLE /      /'
   echo "      Install the runtime deps and re-run; only a HASH MISMATCH means a violation." >&2
+elif ! printf '%s' "$seal_out" | grep -q "^COUNT"; then
+  # The check CRASHED — no COUNT, no verdict lines, just a traceback in seal_out.
+  # Before 2026-08-02 this fell through to the success branch and printed
+  # "all  seal(s) intact" (count blank) over an unparseable seal file: the gate's
+  # core property, vacuously green, on exactly the input a tamperer would leave
+  # behind. Gate-design rule 7: a crashing check must never read as a passing one.
+  bad "seal check CRASHED — refusing to call unreadable seals intact:"
+  printf '%s\n' "$seal_out" | tail -5 | sed 's/^/      /'
 else
   n=$(printf '%s' "$seal_out" | grep "^COUNT" | awk '{print $2}')
   ok "all $n seal(s) intact — spec and strategy code unchanged since sealing"
@@ -212,10 +220,20 @@ else
 fi
 
 # --- 6. no secrets ---------------------------------------------------------- #
+# Both scans, per gate-design rule 8: `detect` reads HISTORY only, so a secret
+# sitting in the files right now — the state an unattended loop is in between
+# write and commit — is invisible without --no-git. Found live 2026-08-02: a
+# probe secret appended to a worktree file left this check green.
 if gitleaks detect --no-banner --redact -v >/tmp/alpha_gate_leaks.log 2>&1; then
-  ok "gitleaks: no secrets in the tree or its history"
+  ok "gitleaks: no secrets in git history"
 else
-  bad "gitleaks found secrets:"; tail -15 /tmp/alpha_gate_leaks.log | sed 's/^/      /'
+  bad "gitleaks found secrets in history:"; tail -15 /tmp/alpha_gate_leaks.log | sed 's/^/      /'
+fi
+if gitleaks detect --no-git --no-banner --redact -v >/tmp/alpha_gate_leaks_wt.log 2>&1; then
+  ok "gitleaks: no secrets in the working tree"
+else
+  bad "gitleaks found secrets in the WORKING TREE (about to be committed):"
+  tail -15 /tmp/alpha_gate_leaks_wt.log | sed 's/^/      /'
 fi
 
 # --- mutation guard, closing -------------------------------------------------#
