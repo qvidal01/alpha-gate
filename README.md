@@ -237,6 +237,6 @@ dashboards. `mexc-trading-bot` stays frozen; nothing here can reach an account.
 
 ## License / status
 
-Internal AIQSO research tooling. Not investment advice, not a trading system,
+MIT (see `LICENSE`). Not investment advice, not a trading system,
 and not capable of becoming one without a reviewed diff that adds a capability
 this repo was specifically built to lack.

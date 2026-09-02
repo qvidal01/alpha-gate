@@ -32,9 +32,9 @@
 #       3 UNKNOWN (could not reach the destination — not a pass)
 set -uo pipefail
 
-SRC="${ALPHA_GATE_DATA:-/aidata/projects/alpha-gate/data/bars}"
-DEST_HOST="${ALPHA_GATE_BACKUP_HOST:-user@backup-host}"
-DEST_DIR="${ALPHA_GATE_BACKUP_DIR:-/path/on/backup-host}"
+SRC="${ALPHA_GATE_DATA:-$(cd "$(dirname "$0")/.." && pwd)/data/bars}"
+DEST_HOST="${ALPHA_GATE_BACKUP_HOST:?set ALPHA_GATE_BACKUP_HOST=user@backup-host}"
+DEST_DIR="${ALPHA_GATE_BACKUP_DIR:?set ALPHA_GATE_BACKUP_DIR=/path/on/backup-host}"
 VERIFY_ONLY=0
 [ "${1:-}" = "--verify" ] && VERIFY_ONLY=1
 
